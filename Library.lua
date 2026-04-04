@@ -1,54 +1,29 @@
-local RealInputService = game:GetService('UserInputService')
-local _mousePressed = false
-RealInputService.InputBegan:Connect(function(inp) if inp.UserInputType == Enum.UserInputType.MouseButton1 then _mousePressed = true end end)
-RealInputService.InputEnded:Connect(function(inp) if inp.UserInputType == Enum.UserInputType.MouseButton1 then _mousePressed = false end end)
-local InputService = setmetatable({
-    IsMouseButtonPressed = function(self, inputType)
-        if inputType == Enum.UserInputType.MouseButton1 then return _mousePressed end
-        return pcall(function() return RealInputService:IsMouseButtonPressed(inputType) end)
-    end
-}, {
-    __index = function(self, key)
-        local val = RealInputService[key]
-        if type(val) == "function" then return function(_, ...) return val(RealInputService, ...) end end
-        return val
-    end
-})
-local TextService = { GetTextSize = function(self, str, sz, f, res) return Vector2.new(#tostring(str) * (sz * 0.55), sz) end }
-local CoreGui = game:GetService('CoreGui');
-local Teams = game:GetService('Teams');
-local Players = game:GetService('Players');
-local RunService = game:GetService('RunService')
-local TweenService = {
-    Create = function(self, instance, tweenInfo, propTable)
-        return {
-            Play = function()
-                for k, v in pairs(propTable) do pcall(function() instance[k] = v end) end
-            end,
-            Cancel = function() end, Pause = function() end, Stop = function() end
-        }
-    end
-}
-local RenderStepped = RunService.RenderStepped;
-local LocalPlayer = Players.LocalPlayer;
-local Mouse = LocalPlayer:GetMouse();
-
+task.wait(0.5);
 local ProtectGui = protectgui or (syn and syn.protect_gui) or (function() end);
-
 local ScreenGui = Instance.new('ScreenGui');
-pcall(function()
-    ScreenGui.Name = game:GetService("HttpService"):GenerateGUID(false)
-end)
-ProtectGui(ScreenGui);
+
+task.spawn(function()
+    local hidden = (gethui and gethui()) or (get_hidden_gui and get_hidden_gui());
+    if hidden then 
+        ScreenGui.Parent = hidden;
+    else
+        ScreenGui.Parent = CoreGui;
+    end;
+    ProtectGui(ScreenGui);
+end);
 
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Global;
+ScreenGui.Name = HttpService:GenerateGUID(false);
+ScreenGui.DisplayOrder = 100;
 
-local success, hui = pcall(function() return gethui() end)
-if success and hui then
-    ScreenGui.Parent = hui
-else
-    ScreenGui.Parent = CoreGui;
-end
+task.spawn(function()
+    while true do
+        if ScreenGui.Parent then
+            ScreenGui.Enabled = true;
+        end;
+        task.wait(1);
+    end;
+end);
 
 local Toggles = {};
 local Options = {};
@@ -98,6 +73,125 @@ table.insert(Library.Signals, RenderStepped:Connect(function(Delta)
         Library.CurrentRainbowColor = Color3.fromHSV(Hue, 0.8, 1);
     end
 end))
+
+-- Solance subscription (same Supabase project as website / counterblox loader)
+local SOLANCE_SUPABASE_URL = 'https://kgcpzexkgrdsvupaxpmv.supabase.co';
+local SOLANCE_SUPABASE_KEY = 'sb_publishable_j0TFGJANFx3WUC_SMmOo8g_yLLDG7o5';
+
+local function GetRequestFunc()
+    return syn and syn.request or http_request or request or (http and http.request);
+end;
+
+local function GetLocalSolanceUserId()
+    local request_func = GetRequestFunc();
+    if not request_func then
+        return nil;
+    end;
+
+    local success, res = pcall(function()
+        return request_func({
+            Url = 'http://127.0.0.1:9999/auth';
+            Method = 'GET';
+        });
+    end);
+
+    if not success or not res or res.StatusCode ~= 200 then
+        return nil;
+    end;
+
+    local ok, data = pcall(function()
+        return HttpService:JSONDecode(res.Body);
+    end);
+
+    if not ok or type(data) ~= 'table' or not data.user_id then
+        return nil;
+    end;
+
+    return data.user_id;
+end;
+
+-- Returns: days_remaining (number), is_lifetime (bool). (nil, nil) on error.
+-- Lifetime = expires_at year >= 2090 (matches website "Lifetime" checkout to 2099).
+local function FetchSubscriptionInfo()
+    local request_func = GetRequestFunc();
+    if not request_func then
+        return nil;
+    end;
+
+    local user_id = GetLocalSolanceUserId();
+    if not user_id then
+        return nil;
+    end;
+
+    local url = SOLANCE_SUPABASE_URL .. '/rest/v1/subscriptions?select=expires_at&user_id=eq.' .. user_id;
+    local success, res = pcall(function()
+        return request_func({
+            Url = url;
+            Method = 'GET';
+            Headers = {
+                ['apikey'] = SOLANCE_SUPABASE_KEY;
+                ['Authorization'] = 'Bearer ' .. SOLANCE_SUPABASE_KEY;
+                ['Content-Type'] = 'application/json';
+            };
+        });
+    end);
+
+    if not success or not res or res.StatusCode ~= 200 then
+        return nil;
+    end;
+
+    local ok, data = pcall(function()
+        return HttpService:JSONDecode(res.Body);
+    end);
+
+    if not ok or type(data) ~= 'table' or #data == 0 or not data[1].expires_at then
+        return nil;
+    end;
+
+    local expire_str = data[1].expires_at:gsub('T', ' '):gsub('Z', '');
+    local y, m, d, h, min, s = expire_str:match('(%d+)-(%d+)-(%d+) (%d+):(%d+):(%d+)');
+    if not y then
+        return nil;
+    end;
+
+    local expire_time = os.time({ year = y, month = m, day = d, hour = h, min = min, sec = s });
+    local days = math.ceil((expire_time - os.time()) / 86400);
+    local is_lifetime = tonumber(y) >= 2090;
+
+    return days, is_lifetime;
+end;
+
+function Library:RefreshSubscriptionLabel()
+    local label = self.SubscriptionLabel;
+    if not label then
+        return;
+    end;
+
+    task.spawn(function()
+        local days, is_lifetime = FetchSubscriptionInfo();
+
+        if not label.Parent then
+            return;
+        end;
+
+        if days == nil then
+            label.Text = 'days: unavailable';
+            return;
+        end;
+
+        if days < 0 then
+            label.Text = 'days: expired';
+            return;
+        end;
+
+        if is_lifetime then
+            label.Text = 'days: lifetime';
+            return;
+        end;
+
+        label.Text = 'days: ' .. tostring(days);
+    end);
+end;
 
 local function GetPlayersString()
     local PlayerList = Players:GetPlayers();
@@ -940,6 +1034,13 @@ do
             Library.OpenedFrames[PickerFrameOuter] = nil;
         end;
 
+        function ColorPicker:SetVisible(state)
+            DisplayFrame.Visible = state;
+            if not state then
+                ColorPicker:Hide();
+            end;
+        end;
+
         function ColorPicker:SetValue(HSV, Transparency)
             local Color = Color3.fromHSV(HSV[1], HSV[2], HSV[3]);
 
@@ -1256,7 +1357,9 @@ do
             local Key, Mode = Data[1], Data[2];
             DisplayLabel.Text = Key;
             KeyPicker.Value = Key;
-            ModeButtons[Mode]:Select();
+            if ModeButtons[Mode] then
+                ModeButtons[Mode]:Select();
+            end
             KeyPicker:Update();
         end;
 
@@ -2925,7 +3028,115 @@ do
     Library.KeybindFrame = KeybindOuter;
     Library.KeybindContainer = KeybindContainer;
     Library:MakeDraggable(KeybindOuter);
+
+    local SpectatorOuter = Library:Create('Frame', {
+        AnchorPoint = Vector2.new(0, 0.5);
+        BackgroundColor3 = Color3.new(0, 0, 0);
+        BorderSizePixel = 0;
+        Position = UDim2.new(0, 10, 0.5, 70); 
+        Size = UDim2.new(0, 210, 0, 20);
+        Visible = false;
+        ZIndex = 100;
+        Parent = ScreenGui;
+    });
+
+    Library:ApplyDesign(SpectatorOuter, 6, Library.OutlineColor);
+
+    local SpectatorInner = Library:Create('Frame', {
+        BackgroundColor3 = Library.MainColor;
+        BorderSizePixel = 0;
+        Size = UDim2.new(1, 0, 1, 0);
+        ZIndex = 101;
+        Parent = SpectatorOuter;
+    });
+
+    Library:ApplyDesign(SpectatorInner, 6, Color3.fromRGB(0, 0, 0));
+
+    Library:AddToRegistry(SpectatorInner, {
+        BackgroundColor3 = 'MainColor';
+    }, true);
+
+    local SpectatorColorFrame = Library:Create('Frame', {
+        BackgroundColor3 = Library.AccentColor;
+        BorderSizePixel = 0;
+        Size = UDim2.new(1, 0, 0, 2);
+        ZIndex = 102;
+        Parent = SpectatorInner;
+    });
+
+    Library:AddToRegistry(SpectatorColorFrame, {
+        BackgroundColor3 = 'AccentColor';
+    }, true);
+
+    local SpectatorLabel = Library:CreateLabel({
+        Size = UDim2.new(1, 0, 0, 20);
+        Position = UDim2.fromOffset(5, 2),
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Font = Library.Font,
+        TextColor3 = Library.FontColor,
+        Text = 'spectator list';
+        ZIndex = 104;
+        Parent = SpectatorInner;
+    });
+
+    local SpectatorContainer = Library:Create('Frame', {
+        BackgroundTransparency = 1;
+        Size = UDim2.new(1, 0, 1, -20);
+        Position = UDim2.new(0, 0, 0, 20);
+        ZIndex = 1;
+        Parent = SpectatorInner;
+    });
+
+    Library:Create('UIListLayout', {
+        FillDirection = Enum.FillDirection.Vertical;
+        SortOrder = Enum.SortOrder.LayoutOrder;
+        Parent = SpectatorContainer;
+    });
+
+    Library:Create('UIPadding', {
+        PaddingLeft = UDim.new(0, 5),
+        Parent = SpectatorContainer,
+    });
+
+    Library.SpectatorFrame = SpectatorOuter;
+    Library.SpectatorContainer = SpectatorContainer;
+    Library:MakeDraggable(SpectatorOuter);
 end;
+
+function Library:UpdateSpectators(players)
+    for _, child in next, Library.SpectatorContainer:GetChildren() do
+        if child:IsA('TextLabel') then
+            child:Destroy()
+        end
+    end
+
+    local YSize = 0
+    local XSize = 0
+
+    if type(players) == "table" then
+        for _, plName in next, players do
+            local Label = Library:CreateLabel({
+                TextXAlignment = Enum.TextXAlignment.Left;
+                Size = UDim2.new(1, 0, 0, 18);
+                TextSize = 13;
+                Visible = true;
+                ZIndex = 110;
+                Parent = Library.SpectatorContainer;
+                Text = plName;
+            }, true)
+
+            Label.TextColor3 = Library.AccentColor;
+            Library.RegistryMap[Label].Properties.TextColor3 = 'AccentColor';
+
+            YSize = YSize + 18;
+            if (Label.TextBounds.X > XSize) then
+                XSize = Label.TextBounds.X
+            end
+        end
+    end
+
+    Library.SpectatorFrame.Size = UDim2.new(0, math.max(XSize + 10, 210), 0, YSize + 23)
+end
 
 function Library:SetWatermarkVisibility(Bool)
     Library.Watermark.Visible = Bool;
@@ -3215,9 +3426,9 @@ function Library:CreateWindow(...)
         AnchorPoint = Config.AnchorPoint,
         BackgroundColor3 = Color3.new(0, 0, 0);
         BorderSizePixel = 0;
-        Position = Config.Position,
+        Position = UDim2.new(10, 0, 10, 0),
         Size = Config.Size,
-        Visible = false;
+        Visible = true;
         ZIndex = 1;
         Parent = ScreenGui;
     });
@@ -3249,46 +3460,36 @@ function Library:CreateWindow(...)
         Parent = Inner;
     });
 
-    -- Player Avatar + Name (top-right header)
+    -- Subscription time remaining (top-right header); data from Supabase via loader session
     local Players = game:GetService('Players')
     local LocalPlayer = Players.LocalPlayer
 
-    local PlayerNameLabel = Library:CreateLabel({
+    Library.PlayerRealName = string.lower(LocalPlayer.Name);
+    Library.PlayerNameLabel = nil;
+
+    local SubscriptionLabel = Library:CreateLabel({
         AnchorPoint = Vector2.new(1, 0);
-        Position = UDim2.new(1, -32, 0, 0);
-        Size = UDim2.new(0, 200, 0, 25);
-        Text = string.lower(LocalPlayer.Name);
+        Position = UDim2.new(1, -10, 0, 0);
+        Size = UDim2.new(0, 300, 0, 25);
+        Text = 'days: ...';
         TextXAlignment = Enum.TextXAlignment.Right;
         TextSize = 13;
         ZIndex = 1;
         Parent = Inner;
     });
 
-    local AvatarFrame = Library:Create('Frame', {
-        AnchorPoint = Vector2.new(1, 0.5);
-        Position = UDim2.new(1, -8, 0, 12);
-        Size = UDim2.new(0, 20, 0, 20);
-        BackgroundColor3 = Color3.new(1, 1, 1);
-        BorderSizePixel = 0;
-        ZIndex = 2;
-        Parent = Inner;
-    });
+    Library.SubscriptionLabel = SubscriptionLabel;
 
-    Library:Create('UICorner', { CornerRadius = UDim.new(1, 0), Parent = AvatarFrame });
+    Library:RefreshSubscriptionLabel();
 
-    local AvatarImage = Library:Create('ImageLabel', {
-        Size = UDim2.new(1, 0, 1, 0);
-        BackgroundTransparency = 1;
-        Image = 'rbxthumb://type=AvatarHeadShot&id=' .. LocalPlayer.UserId .. '&w=48&h=48';
-        ZIndex = 3;
-        Parent = AvatarFrame;
-    });
-
-    Library:Create('UICorner', { CornerRadius = UDim.new(1, 0), Parent = AvatarImage });
-
-    -- Store references for name protect integration
-    Library.PlayerNameLabel = PlayerNameLabel
-    Library.PlayerRealName = string.lower(LocalPlayer.Name)
+    task.spawn(function()
+        while SubscriptionLabel.Parent do
+            task.wait(60);
+            if SubscriptionLabel.Parent then
+                Library:RefreshSubscriptionLabel();
+            end;
+        end;
+    end);
 
 
     local MainSectionOuter = Library:Create('Frame', {
@@ -3517,9 +3718,9 @@ function Library:CreateWindow(...)
         local TabFrame = Library:Create('Frame', {
             Name = 'TabFrame',
             BackgroundTransparency = 1;
-            Position = UDim2.new(0, 0, 0, 0);
+            Position = UDim2.new(10, 0, 10, 0);
             Size = UDim2.new(1, 0, 1, 0);
-            Visible = false;
+            Visible = true;
             ZIndex = 2;
             Parent = TabContainer;
         });
@@ -3573,35 +3774,27 @@ function Library:CreateWindow(...)
         end;
 
         function Tab:ShowTab()
-            for _, Tab in next, Window.Tabs do
-                Tab:HideTab();
+            for _, T in next, Window.Tabs do
+                T:HideTab();
             end;
 
-            -- Hide welcome screen
-            if WelcomeFrame and WelcomeFrame.Visible then
-                WelcomeFrame.Visible = false;
+            if WelcomeFrame then
+                WelcomeFrame.Position = UDim2.new(10, 0, 10, 0);
             end
 
             TweenService:Create(TabButton, TweenInfo.new(0.3), { BackgroundColor3 = Library.MainColor }):Play();
             TabButtonLabel.TextColor3 = Library.AccentColor;
-
             Library.RegistryMap[TabButton].Properties.BackgroundColor3 = 'MainColor';
 
-            -- Animate tab content in (slide up)
-            TabFrame.Position = UDim2.new(0, 0, 0, 8);
-            TabFrame.Visible = true;
-
-            TweenService:Create(TabFrame, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-                Position = UDim2.new(0, 0, 0, 0)
-            }):Play();
+            TabFrame.Position = UDim2.new(0, 0, 0, 0);
         end;
 
         function Tab:HideTab()
             TweenService:Create(TabButton, TweenInfo.new(0.3), { BackgroundColor3 = Library.BackgroundColor }):Play();
             TabButtonLabel.TextColor3 = Library.FontColor;
-
             Library.RegistryMap[TabButton].Properties.BackgroundColor3 = 'BackgroundColor';
-            TabFrame.Visible = false;
+
+            TabFrame.Position = UDim2.new(10, 0, 10, 0);
         end;
 
         function Tab:SetLayoutOrder(Position)
@@ -3943,17 +4136,14 @@ function Library:CreateWindow(...)
             return;
         end;
 
-        local FadeTime = Config.MenuFadeTime;
         Fading = true;
         Toggled = (not Toggled);
         ModalElement.Modal = Toggled;
 
         if Toggled then
-            -- A bit scuffed, but if we're going from not toggled -> toggled we want to show the frame immediately so that the fade is visible.
-            Outer.Visible = true;
+            Outer.Position = Config.Position;
 
             task.spawn(function()
-                -- TODO: add cursor fade?
                 local State = InputService.MouseIconEnabled;
 
                 local Cursor = Drawing.new('Triangle');
@@ -3990,45 +4180,9 @@ function Library:CreateWindow(...)
                 Cursor:Remove();
                 CursorOutline:Remove();
             end);
+        else
+            Outer.Position = UDim2.new(10, 0, 10, 0);
         end;
-
-        for _, Desc in next, Outer:GetDescendants() do
-            local Properties = {};
-
-            if Desc:IsA('ImageLabel') then
-                table.insert(Properties, 'ImageTransparency');
-                table.insert(Properties, 'BackgroundTransparency');
-            elseif Desc:IsA('TextLabel') or Desc:IsA('TextBox') then
-                table.insert(Properties, 'TextTransparency');
-            elseif Desc:IsA('Frame') or Desc:IsA('ScrollingFrame') then
-                table.insert(Properties, 'BackgroundTransparency');
-            elseif Desc:IsA('UIStroke') then
-                table.insert(Properties, 'Transparency');
-            end;
-
-            local Cache = TransparencyCache[Desc];
-
-            if (not Cache) then
-                Cache = {};
-                TransparencyCache[Desc] = Cache;
-            end;
-
-            for _, Prop in next, Properties do
-                if not Cache[Prop] then
-                    Cache[Prop] = Desc[Prop];
-                end;
-
-                if Cache[Prop] == 1 then
-                    continue;
-                end;
-
-                TweenService:Create(Desc, TweenInfo.new(FadeTime, Enum.EasingStyle.Linear), { [Prop] = Toggled and Cache[Prop] or 1 }):Play();
-            end;
-        end;
-
-        task.wait(FadeTime);
-
-        Outer.Visible = Toggled;
 
         Fading = false;
     end
