@@ -1,101 +1,79 @@
 task.wait(0.5);
+local InputService = game:GetService('UserInputService');
+local TextService = game:GetService('TextService');
+local TweenService = game:GetService('TweenService');
+local HttpService = game:GetService('HttpService');
+local RunService = game:GetService('RunService');
+local CoreGui = game:GetService('CoreGui');
+local Teams = game:GetService('Teams');
+local Players = game:GetService('Players');
+local LocalPlayer = Players.LocalPlayer;
+local Mouse = LocalPlayer:GetMouse();
+local RenderStepped = RunService.RenderStepped;
 local ProtectGui = protectgui or (syn and syn.protect_gui) or (function() end);
 local ScreenGui = Instance.new('ScreenGui');
-
 task.spawn(function()
-    local hidden = (gethui and gethui()) or (get_hidden_gui and get_hidden_gui());
-    if hidden then 
-        ScreenGui.Parent = hidden;
-    else
-        ScreenGui.Parent = CoreGui;
-    end;
-    ProtectGui(ScreenGui);
+local hidden = (gethui and gethui()) or (get_hidden_gui and get_hidden_gui());
+if hidden then ScreenGui.Parent = hidden; else ScreenGui.Parent = CoreGui; end;
+ProtectGui(ScreenGui);
 end);
-
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Global;
 ScreenGui.Name = HttpService:GenerateGUID(false);
 ScreenGui.DisplayOrder = 100;
-
 task.spawn(function()
-    while true do
-        if ScreenGui.Parent then
-            ScreenGui.Enabled = true;
-        end;
-        task.wait(1);
-    end;
+while true do
+if ScreenGui.Parent then ScreenGui.Enabled = true; end;
+task.wait(1);
+end;
 end);
-
 local Toggles = {};
 local Options = {};
-
 getgenv().Toggles = Toggles;
 getgenv().Options = Options;
-
 local Library = {
-    Registry = {};
-    RegistryMap = {};
-
-    HudRegistry = {};
-
-    FontColor = Color3.fromRGB(255, 255, 255);
-    MainColor = Color3.fromRGB(15, 15, 18);
-    BackgroundColor = Color3.fromRGB(10, 10, 12);
-    AccentColor = Color3.fromRGB(255, 255, 255);
-    OutlineColor = Color3.fromRGB(35, 35, 38);
-    RiskColor = Color3.fromRGB(255, 50, 50),
-
-    Black = Color3.new(0, 0, 0);
-    Font = Enum.Font.Ubuntu,
-
-    OpenedFrames = {};
-    DependencyBoxes = {};
-
-    Signals = {};
-    ScreenGui = ScreenGui;
+Registry = {};
+RegistryMap = {};
+HudRegistry = {};
+FontColor = Color3.fromRGB(255, 255, 255);
+MainColor = Color3.fromRGB(15, 15, 18);
+BackgroundColor = Color3.fromRGB(10, 10, 12);
+AccentColor = Color3.fromRGB(255, 255, 255);
+OutlineColor = Color3.fromRGB(35, 35, 38);
+RiskColor = Color3.fromRGB(255, 50, 50),
+Black = Color3.new(0, 0, 0);
+Font = Enum.Font.Ubuntu,
+OpenedFrames = {};
+DependencyBoxes = {};
+Signals = {};
+ScreenGui = ScreenGui;
 };
-
 local RainbowStep = 0
 local Hue = 0
-
 table.insert(Library.Signals, RenderStepped:Connect(function(Delta)
-    RainbowStep = RainbowStep + Delta
-
-    if RainbowStep >= (1 / 60) then
-        RainbowStep = 0
-
-        Hue = Hue + (1 / 400);
-
-        if Hue > 1 then
-            Hue = 0;
-        end;
-
-        Library.CurrentRainbowHue = Hue;
-        Library.CurrentRainbowColor = Color3.fromHSV(Hue, 0.8, 1);
-    end
+RainbowStep = RainbowStep + Delta
+if RainbowStep >= (1 / 60) then
+RainbowStep = 0
+Hue = Hue + (1 / 400);
+if Hue > 1 then Hue = 0; end;
+Library.CurrentRainbowHue = Hue;
+Library.CurrentRainbowColor = Color3.fromHSV(Hue, 0.8, 1);
+end
 end))
-
--- Solance subscription (same Supabase project as website / counterblox loader)
 local SOLANCE_SUPABASE_URL = 'https://kgcpzexkgrdsvupaxpmv.supabase.co';
 local SOLANCE_SUPABASE_KEY = 'sb_publishable_j0TFGJANFx3WUC_SMmOo8g_yLLDG7o5';
-
 local function GetRequestFunc()
-    return syn and syn.request or http_request or request or (http and http.request);
+return syn and syn.request or http_request or request or (http and http.request);
 end;
-
 local function GetLocalSolanceUserId()
-    local request_func = GetRequestFunc();
-    if not request_func then
-        return nil;
-    end;
-
-    local success, res = pcall(function()
-        return request_func({
-            Url = 'http://127.0.0.1:9999/auth';
-            Method = 'GET';
-        });
-    end);
-
-    if not success or not res or res.StatusCode ~= 200 then
+local request_func = GetRequestFunc();
+if not request_func then return nil; end;
+local success, res = pcall(function()
+return request_func({
+Url = 'http://127.0.0.1:9999/auth';
+Method = 'GET';
+});
+end);
+if not success or not res or res.StatusCode ~= 200 then
         return nil;
     end;
 
